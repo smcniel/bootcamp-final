@@ -1,14 +1,22 @@
-# Some of this code is based on IMAP4 Client Library tutorial
-# https://pymotw.com/3/imaplib/index.html#example-configuration
+'''
+Some of this code comes from the IMAP4 Client Library tutorial.
+https://pymotw.com/3/imaplib/index.html#example-configuration
+
+Please note, this has only been tested for gmail accounts.
+'''
 import imaplib
 import configparser
-# from pprint import pprint
 import re
 import email
 import email.parser
+# evolving python script for testing that contain items not fit for the public
 import private
+import dateutil.parser
+from models import Email, db
 
+# Regrex patterns for cleaning email messages
 pattern = re.compile('On.*', re.DOTALL)
+email_pat = re.compile(r'[\w.-]+@[\w.-]+.\w+')
 
 
 def open_connection(verbose=False):
@@ -43,10 +51,18 @@ def parse_payload(body):
     else:
         return body
 
+
+def parse_emailadd(string):
+    match = re.search(email_pat, string)
+    if match:
+        return match.group()
+    else:
+        return string
+
 if __name__ == '__main__':
     mailbox = private.mailbox
     e_addr = private.e_addr
-    emails = {}
+    # emails = {}
     with open_connection(verbose=True) as c:
         c.select('{}'.format(mailbox), readonly=True)
         typ, data = c.search(None, '(FROM "{}")'.format(e_addr))
@@ -55,31 +71,34 @@ if __name__ == '__main__':
 
             # the message we want is in the nested tuple
             # print(num, type(data[0][1]))  # bytes type
+
             # num is bytes so have to convert
-            msg_num = num.decode('utf-8')
+            msg_id = num.decode('utf-8')
 
             for response in data:
                 if isinstance(response, tuple):
                     email_parser = email.parser.BytesFeedParser()
                     email_parser.feed(response[1])
                     msg = email_parser.close()
-                    # print(num, msg)
-                    subject = msg['subject']
-                    receiver = msg['to']
-                    date = msg['date']
-                    # header = (subject, receiver, date)
-                    # print(header)
-
                     # print(type(msg))  # email.message.Message
+                    subject = msg['subject']
+                    recipient = msg['to']
+                    cleaned_recipient = parse_emailadd(recipient)
+                    sender = msg['from']
+                    cleaned_sender = parse_emailadd(sender)
+                    date = msg['date']
+                    # parse date for correct db storage
+                    parsed_date = dateutil.parser.parse(date)
                     for part in msg.walk():
                         if part.get_content_type() == 'text/plain':
                             body = part.get_payload()
                             stripped_body = parse_payload(body)
-            # num is str, body is str, header is tuple
-            # print(msg_num, body, header)
-            e_data = (stripped_body, subject, receiver, date)
-            # print(stripped_body)
-            emails[msg_num] = e_data
-            print(emails)
+
+            e_data = Email(msg_id, subject, cleaned_recipient, cleaned_sender, parsed_date, stripped_body)
+            db.session.add(e_data)
+            db.session.commit()
+
+    print('data in')
+# to do, finish parsing body so doesn't include forwarded attachments
 
 
